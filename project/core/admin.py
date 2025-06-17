@@ -392,7 +392,7 @@ class StockRecordAdmin(admin.ModelAdmin):
 
 
 # 注册模型到admin
-admin.site.unregister(User)
+# 因为我们使用了自定义User模型，不需要先注销
 admin.site.register(User, CustomUserAdmin)
 
 # 自定义admin站点标题

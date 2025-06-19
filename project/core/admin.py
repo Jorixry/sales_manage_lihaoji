@@ -56,10 +56,13 @@ class CustomerAdmin(admin.ModelAdmin):
     
     def total_sales(self, obj):
         """总销售额"""
-        total = obj.order_set.filter(
-            status__in=['confirmed', 'shipping', 'completed']
-        ).aggregate(total=Sum('sales_amount'))['total'] or 0
-        return f'¥{total:,.2f}'
+        try:
+            total = obj.order_set.filter(
+                status__in=['confirmed', 'shipping', 'completed']
+            ).aggregate(total=Sum('sales_amount'))['total'] or Decimal('0')
+            return f'¥{float(total):,.2f}'
+        except (ValueError, TypeError):
+            return '¥0.00'
     total_sales.short_description = '总销售额'
 
 
@@ -88,24 +91,35 @@ class ProductAdmin(admin.ModelAdmin):
     )
     
     def cost_price_display(self, obj):
-        return f'¥{obj.cost_price}'
+        try:
+            return f'¥{float(obj.cost_price):,.2f}'
+        except (ValueError, TypeError):
+            return '¥0.00'
     cost_price_display.short_description = '成本价'
     
     def current_stock_display(self, obj):
-        return format_html(
-            '<span style="color: {};">{}</span>',
-            'red' if obj.current_stock < 10 else 'green',
-            obj.current_stock
-        )
+        try:
+            stock = int(obj.current_stock or 0)
+            return format_html(
+                '<span style="color: {};">{}</span>',
+                'red' if stock < 10 else 'green',
+                stock
+            )
+        except (ValueError, TypeError):
+            return '0'
     current_stock_display.short_description = '当前库存'
     
     def stock_status(self, obj):
-        if obj.current_stock == 0:
-            return format_html('<span style="color: red;">缺货</span>')
-        elif obj.current_stock < 10:
-            return format_html('<span style="color: orange;">库存偏低</span>')
-        else:
-            return format_html('<span style="color: green;">库存充足</span>')
+        try:
+            stock = int(obj.current_stock or 0)
+            if stock == 0:
+                return format_html('<span style="color: red;">缺货</span>')
+            elif stock < 10:
+                return format_html('<span style="color: orange;">库存偏低</span>')
+            else:
+                return format_html('<span style="color: green;">库存充足</span>')
+        except (ValueError, TypeError):
+            return format_html('<span style="color: gray;">未知</span>')
     stock_status.short_description = '库存状态'
 
 
@@ -161,40 +175,51 @@ class BatchAdmin(admin.ModelAdmin):
     
     def total_sales_display(self, obj):
         """总销售额"""
-        total = obj.orders.filter(
-            status__in=['confirmed', 'shipping', 'completed']
-        ).aggregate(total=Sum('sales_amount'))['total'] or 0
-        return f'¥{total:,.2f}'
+        try:
+            total = obj.orders.filter(
+                status__in=['confirmed', 'shipping', 'completed']
+            ).aggregate(total=Sum('sales_amount'))['total'] or Decimal('0')
+            return f'¥{float(total):,.2f}'
+        except (ValueError, TypeError):
+            return '¥0.00'
     total_sales_display.short_description = '总销售额'
     
     def total_profit_display(self, obj):
         """总利润显示"""
-        color = 'green' if obj.total_profit > 0 else 'red' if obj.total_profit < 0 else 'black'
-        return format_html(
-            '<span style="color: {};">¥{:,.2f}</span>',
-            color,
-            obj.total_profit
-        )
+        try:
+            profit = obj.total_profit or Decimal('0')
+            profit_float = float(profit)
+            color = 'green' if profit_float > 0 else 'red' if profit_float < 0 else 'black'
+            return format_html(
+                '<span style="color: {};">¥{}</span>',
+                color,
+                f'{profit_float:,.2f}'
+            )
+        except (ValueError, TypeError):
+            return format_html('<span style="color: red;">数据错误</span>')
     total_profit_display.short_description = '总利润'
     
     def profit_margin(self, obj):
         """利润率"""
-        total_sales = obj.orders.filter(
-            status__in=['confirmed', 'shipping', 'completed']
-        ).aggregate(total=Sum('sales_amount'))['total'] or Decimal('0')
-        
-        if total_sales > 0:
-            margin = (obj.total_profit / total_sales) * 100
-            color = 'green' if margin > 20 else 'orange' if margin > 10 else 'red'
-            return format_html(
-                '<span style="color: {};">{:.1f}%</span>',
-                color,
-                margin
-            )
-        return '-'
+        try:
+            total_sales = obj.orders.filter(
+                status__in=['confirmed', 'shipping', 'completed']
+            ).aggregate(total=Sum('sales_amount'))['total'] or Decimal('0')
+            
+            profit = obj.total_profit or Decimal('0')
+            
+            if total_sales > 0 and profit is not None:
+                margin = float((profit / total_sales) * 100)
+                color = 'green' if margin > 20 else 'orange' if margin > 10 else 'red'
+                return format_html(
+                    '<span style="color: {};">{}</span>',
+                    color,
+                    f'{margin:.1f}%'
+                )
+            return '-'
+        except (ValueError, TypeError, ZeroDivisionError):
+            return format_html('<span style="color: red;">计算错误</span>')
     profit_margin.short_description = '利润率'
-    
-    actions = ['recalculate_profit']
     
     def recalculate_profit(self, request, queryset):
         """重新计算批次利润"""
@@ -207,11 +232,21 @@ class BatchAdmin(admin.ModelAdmin):
 @admin.register(Order)
 class OrderAdmin(admin.ModelAdmin):
     """订单管理"""
-    list_display = ['order_number', 'batch_link', 'customer_link', 'product', 
-                    'quantity', 'unit_price_display', 'sales_amount_display', 
-                    'gross_profit_display', 'status_display', 'order_date']
+    list_display = [
+        'order_number', 
+        'batch_link',
+        'customer_link', 
+        'product_link', 
+        'quantity',
+        'unit_price_display', 
+        'sales_amount_display',
+        'gross_profit_display',
+        'status_display', 
+        'order_date',
+        'created_by'
+    ]
     search_fields = ['batch__batch_number', 'customer__name', 'product__name', 'remark']
-    list_filter = ['status', 'order_date', 'created_by', 'product__specification']
+    list_filter = ['status', 'batch', 'customer', 'order_date', 'created_by', 'product']
     date_hierarchy = 'order_date'
     ordering = ['-order_date', '-created_at']
     readonly_fields = ['sales_amount', 'total_cost', 'gross_profit', 'created_by', 
@@ -252,32 +287,64 @@ class OrderAdmin(admin.ModelAdmin):
     
     def batch_link(self, obj):
         """批次链接"""
-        url = reverse('admin:sales_batch_change', args=[obj.batch.id])
-        return format_html('<a href="{}">{}</a>', url, obj.batch.batch_number)
+        if obj.batch:
+            try:
+                url = reverse('admin:core_batch_change', args=[obj.batch.pk])
+                return format_html('<a href="{}">{}</a>', url, obj.batch.batch_number)
+            except Exception:
+                return str(obj.batch.batch_number)
+        return '-'
     batch_link.short_description = '批次'
     
     def customer_link(self, obj):
         """客户链接"""
-        url = reverse('admin:sales_customer_change', args=[obj.customer.id])
-        return format_html('<a href="{}">{}</a>', url, obj.customer.name)
+        if obj.customer:
+            try:
+                url = reverse('admin:core_customer_change', args=[obj.customer.pk])
+                return format_html('<a href="{}">{}</a>', url, obj.customer.name)
+            except Exception:
+                return str(obj.customer.name)
+        return '-'
     customer_link.short_description = '客户'
     
+    def product_link(self, obj):
+        """产品链接"""
+        if obj.product:
+            try:
+                url = reverse('admin:core_product_change', args=[obj.product.pk])
+                return format_html('<a href="{}">{}</a>', url, f"{obj.product.name} - {obj.product.specification}")
+            except Exception:
+                return f"{obj.product.name} - {obj.product.specification}"
+        return '-'
+    product_link.short_description = '产品'
+    
     def unit_price_display(self, obj):
-        return f'¥{obj.unit_price}'
+        try:
+            return f'¥{float(obj.unit_price):,.2f}'
+        except (ValueError, TypeError):
+            return '¥0.00'
     unit_price_display.short_description = '单价'
     
     def sales_amount_display(self, obj):
-        return f'¥{obj.sales_amount:,.2f}'
+        try:
+            return f'¥{float(obj.sales_amount):,.2f}'
+        except (ValueError, TypeError):
+            return '¥0.00'
     sales_amount_display.short_description = '销售额'
     
     def gross_profit_display(self, obj):
         """毛利润显示"""
-        color = 'green' if obj.gross_profit > 0 else 'red' if obj.gross_profit < 0 else 'black'
-        return format_html(
-            '<span style="color: {};">¥{:,.2f}</span>',
-            color,
-            obj.gross_profit
-        )
+        try:
+            profit = obj.gross_profit or Decimal('0')
+            profit_float = float(profit)
+            color = 'green' if profit_float > 0 else 'red' if profit_float < 0 else 'black'
+            return format_html(
+                '<span style="color: {};">¥{}</span>',
+                color,
+                f'{profit_float:,.2f}'
+            )
+        except (ValueError, TypeError):
+            return format_html('<span style="color: red;">数据错误</span>')
     gross_profit_display.short_description = '毛利润'
     
     def status_display(self, obj):
@@ -369,21 +436,30 @@ class StockRecordAdmin(admin.ModelAdmin):
     
     def quantity_display(self, obj):
         """数量显示"""
-        if obj.operation_type == 'in':
-            return format_html('<span style="color: green;">+{}</span>', obj.quantity)
-        elif obj.operation_type == 'out':
-            return format_html('<span style="color: red;">-{}</span>', obj.quantity)
-        else:
-            return obj.quantity
+        try:
+            quantity = int(obj.quantity or 0)
+            if obj.operation_type == 'in':
+                return format_html('<span style="color: green;">+{}</span>', quantity)
+            elif obj.operation_type == 'out':
+                return format_html('<span style="color: red;">-{}</span>', quantity)
+            else:
+                return quantity
+        except (ValueError, TypeError):
+            return '0'
     quantity_display.short_description = '数量'
     
     def stock_change(self, obj):
         """库存变化"""
-        return format_html(
-            '{} → <strong>{}</strong>',
-            obj.before_stock,
-            obj.after_stock
-        )
+        try:
+            before = int(obj.before_stock or 0)
+            after = int(obj.after_stock or 0)
+            return format_html(
+                '{} → <strong>{}</strong>',
+                before,
+                after
+            )
+        except (ValueError, TypeError):
+            return '0 → 0'
     stock_change.short_description = '库存变化'
     
     def has_delete_permission(self, request, obj=None):
